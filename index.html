@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tartu County Climate Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--pn:#111c2e;--bd:#22344f;--tx:#dbe4f0;--mu:#7f93b0}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);color:var(--tx);font:12px/1.4 "Segoe UI",system-ui,Arial,sans-serif}
+body{display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+#hd0{flex:none;padding:7px 14px;font-size:13px;font-weight:600;letter-spacing:.4px;background:#0a1626;border-bottom:1px solid var(--bd);color:#cfe0f7}
+#bar{flex:none;display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--bd);background:#0d1829;flex-wrap:wrap}
+button{font:inherit;color:var(--tx);background:#14233b;border:1px solid var(--bd);border-radius:6px;padding:4px 10px;cursor:pointer;transition:.15s}
+button:hover{border-color:#4cc38a}button.act{background:#1d3a5f;border-color:#3b82f6}
+#bh.act{background:#3b1f26;border-color:#ef4444}#bl.act{background:#15304f;border-color:#6ea8ff}
+.chip{display:flex;align-items:center;gap:6px}.chip i{width:10px;height:10px;border-radius:50%;display:inline-block}.chip.off{opacity:.35}
+.sep{width:1px;height:20px;background:var(--bd)}.lg{display:flex;align-items:center;gap:5px;color:var(--mu)}.lg u{width:16px;height:0;border-top:2px solid;display:inline-block}
+#grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,minmax(0,1fr));gap:10px;padding:10px}
+@media(max-width:900px){#grid{grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(3,minmax(0,1fr))}}
+.pn{background:var(--pn);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;min-height:0;min-width:0}
+.hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.hd b{font-size:13px;letter-spacing:.3px}.hd span{color:var(--mu);font-size:11px;white-space:nowrap}
+.rd{display:flex;gap:10px;flex-wrap:wrap;margin:3px 0 2px;font-size:11.5px;color:var(--mu);min-height:18px}
+.rd b{color:#fff;font-weight:600}.rd small{color:var(--mu)}.rd .yr{color:#9ec5ff;font-weight:700}
+.cv{flex:1;min-height:0;position:relative}canvas{touch-action:none;cursor:crosshair}
+.sg{flex:none;display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:5px;padding-top:5px;border-top:1px solid #1a2a44}
+.sc{border-left:3px solid;background:#0e192b;border-radius:0 5px 5px 0;padding:2px 6px;font-size:10px;line-height:1.35;color:var(--mu);white-space:nowrap;overflow:hidden}
+.sc b{color:#fff}.sc>div:first-child b{font-size:10.5px}
+#err{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0b1220ee;text-align:center;padding:30px;z-index:9}
+#err div{max-width:560px;line-height:1.7;font-size:14px}code{background:#14233b;padding:2px 7px;border-radius:5px;color:#9ec5ff}
+</style></head><body>
+<div id="hd0">Climate Profile of Tartu County: Observed Trends and CMIP6 Projections (1950-2100)</div>
+<div id="bar">
+<div id="chips" style="display:flex;gap:6px"></div><div class="sep"></div>
+<span class="lg"><u style="border-color:#e6edf7"></u>ERA5</span>
+<span class="lg"><u style="border-color:#8397b3;border-top-style:dashed"></u>CMIP6 historical</span>
+<span class="lg"><u style="border-color:#3b82f6;border-top-style:dashed"></u>ERA5 Sen trend</span><div class="sep"></div>
+<button id="bd"></button><button id="bc"></button><div class="sep"></div>
+<button data-r="1950,2100">All years</button><button data-r="1950,2025">ERA5 period</button><button data-r="2015,2100">Projections</button><div class="sep"></div>
+<button id="bh">▲ Top 3 highest</button><button id="bl">▼ Top 3 lowest</button><div class="sep"></div>
+<button id="pl">▶ Auto-run</button>
+<span class="lg" style="margin-left:auto">★★★ p&lt;0.001 · ★★ p&lt;0.01 · ★ p&lt;0.05 · n.s. not significant (Mann-Kendall)</span>
+</div>
+<div id="grid"></div>
+<div id="err"><div>Loading data…</div></div>
+<script>
+const $=s=>document.querySelector(s);
+const V={TEMP:{n:'Temperature',u:'°C',m:0,d:1},PREC:{n:'Precipitation',u:'mm/day',m:1,d:2},SNOW:{n:'Snowfall',u:'mm/day',m:1,d:2},EVAP:{n:'Evaporation',u:'mm/day',m:1,d:2},CLOUD:{n:'Cloud cover',u:'%',m:0,d:1},WIND:{n:'Wind speed',u:'m/s',m:0,d:2}};
+const SCN=[['1.9','SSP1-1.9','#4cc38a'],['4.5','SSP2-4.5','#ff9f43'],['8.5','SSP5-8.5','#ef4444']];
+const BANDS=[['P10–P90',.1,.9],['P25–P75',.25,.75],['Min–Max',0,1]];
+const S={on:{'1.9':1,'4.5':1,'8.5':1},bc:1,band:0,hi:0,lo:0,year:2050,hover:null,range:[1950,2100],drag:null,play:null};
+const D={},CH={},R={};let P=1;
+/* ---- stats ---- */
+const cl=a=>a.filter(Number.isFinite),f=(x,d=2)=>Number.isFinite(x)?x.toFixed(d):'–';
+const mean=a=>{a=cl(a);return a.reduce((x,y)=>x+y,0)/a.length};
+const qn=(a,p)=>{const s=cl(a).sort((x,y)=>x-y);if(!s.length)return NaN;const i=(s.length-1)*p,l=Math.floor(i);return s[l]+(s[Math.min(l+1,s.length-1)]-s[l])*(i-l)};
+const erfc=x=>{const t=1/(1+.3275911*x);return t*(.254829592+t*(-.284496736+t*(1.421413741+t*(-1.453152027+t*1.061405429))))*Math.exp(-x*x)};
+function sen(x,y){const n=x.length,sl=[];let s=0;for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){sl.push((y[j]-y[i])/(x[j]-x[i]));s+=Math.sign(y[j]-y[i])}
+const b=qn(sl,.5),v=n*(n-1)*(2*n+5)/18,z=s?(s-Math.sign(s))/Math.sqrt(v):0;return{b,p:erfc(Math.abs(z)/Math.SQRT2),c:qn(x.map((a,i)=>y[i]-b*a),.5)}}
+const SG=p=>p<.001?['★★★','p<0.001','#4cc38a']:p<.01?['★★','p='+p.toFixed(3),'#8bd16b']:p<.05?['★','p='+p.toFixed(3),'#ff9f43']:['n.s.','p='+p.toFixed(2),'#7f93b0'];
+/* ---- data ---- */
+function parse(t){const L=t.replace(/^\uFEFF/,'').split(/\r?\n/).filter(l=>l.trim()),d=L[0].includes('\t')?'\t':L[0].includes(';')?';':',',h=L[0].split(d).map(s=>s.trim());let yi=h.findIndex(x=>x.toLowerCase()==='year');if(yi<0)yi=0;const y=[],c={};h.forEach((x,i)=>{if(i!==yi)c[x]=[]});
+L.slice(1).forEach(l=>{const r=l.split(d),yy=parseInt(r[yi]);if(!yy)return;y.push(yy);h.forEach((x,i)=>{if(i!==yi)c[x].push(parseFloat((r[i]||'').replace(',','.')))})});return{y,c}}
+async function get(names){for(const p of ['','data/'])for(const n of names){try{const r=await fetch(p+n);if(r.ok){const t=await r.text();if(t.trim()&&t.trim()[0]!=='<')return parse(t)}}catch(e){}}return null}
+async function loadVar(v){const e=await get([`ERA5-${v}.csv`,`ERA5_${v}.csv`]),d={era:null,cm:{}};
+if(e){const k=Object.keys(e.c),c=k.find(x=>x.toLowerCase()==='value')||k[0];const y=[],val=[];e.y.forEach((a,i)=>{if(Number.isFinite(e.c[c][i])){y.push(a);val.push(e.c[c][i])}});d.era={y,v:val,tr:sen(y,val)}}
+for(const [k] of SCN){const c=await get([`CMIP6-${v}-${k}.csv`]);if(c)d.cm[k]=c}D[v]=d}
+/* ---- computation ---- */
+function calc(v){const d=D[v],mul=V[v].m,b=BANDS[S.band],res={sc:{}};
+const base=d.era?mean(d.era.v.filter((_,i)=>d.era.y[i]>=1995&&d.era.y[i]<=2014)):null;res.base=base;
+for(const [k] of SCN){const c=d.cm[k];if(!c)continue;
+const ms=Object.values(c.c).map(a=>{const bl=mean(a.filter((_,i)=>c.y[i]>=1995&&c.y[i]<=2014));if(S.bc&&base!==null){if(mul)return bl>0?a.map(x=>x*base/bl):null;return a.map(x=>base+x-bl)}return a}).filter(Boolean);
+const med=[],lo=[],hi=[];c.y.forEach((y,i)=>{const a=ms.map(m=>m[i]);med.push({x:y,y:qn(a,.5)});lo.push({x:y,y:qn(a,b[1])});hi.push({x:y,y:qn(a,b[2])})});
+const ch=ms.map(a=>{const w=mean(a.filter((_,i)=>c.y[i]>=2080&&c.y[i]<=2099)),b0=S.bc&&base!==null?base:mean(a.filter((_,i)=>c.y[i]>=1995&&c.y[i]<=2014));return mul?(w/b0-1)*100:w-b0});
+const fu=med.filter(p=>p.x>=2015&&Number.isFinite(p.y));
+res.sc[k]={med,lo,hi,ch,tr:fu.length>8?sen(fu.map(p=>p.x),fu.map(p=>p.y)):null}}
+return res}
+const F=a=>a.filter(p=>p.x>=S.range[0]&&p.x<=S.range[1]);
+const L=(label,data,color,w=2,o={})=>Object.assign({label,data:F(data),borderColor:color,backgroundColor:color,borderWidth:w,pointRadius:0,tension:.25,borderDash:[]},o);
+function upd(v){const r=calc(v),d=D[v];R[v]=r;const ds=[],first=SCN.find(s=>r.sc[s[0]]),hl=[];
+const add=(col,pts)=>{const a=pts.filter(p=>Number.isFinite(p.y)&&p.x>=S.range[0]&&p.x<=S.range[1]);if(a.length<6)return;const s=[...a].sort((p,q)=>q.y-p.y);hl.push({col,hi:s.slice(0,3),lo:s.slice(-3)})};
+if(first){const h=r.sc[first[0]],H=a=>a.filter(p=>p.x<=2015);
+ds.push(L('_',H(h.lo),'#0000',0),L('_',H(h.hi),'#0000',0,{fill:'-1',backgroundColor:'#8397b32e'}),L('hist',H(h.med),'#8397b3',1.6,{borderDash:[5,3]}))}
+SCN.forEach(([k,l,c])=>{const s=r.sc[k];if(!s||!S.on[k])return;const U=a=>a.filter(p=>p.x>=2015);
+ds.push(L('_',U(s.lo),'#0000',0),L('_',U(s.hi),'#0000',0,{fill:'-1',backgroundColor:c+'33'}),L(l,U(s.med),c,2.2));add(c,U(s.med))});
+if(d.era){const ep=d.era.y.map((x,i)=>({x,y:d.era.v[i]}));ds.push(L('ERA5',ep,'#e6edf7',1.5,{tension:.1}));add('#e6edf7',ep);
+const t=d.era.tr,y0=d.era.y[0],y1=d.era.y[d.era.y.length-1];ds.push(L('trend',[{x:y0,y:t.b*y0+t.c},{x:y1,y:t.b*y1+t.c}],'#3b82f6',2,{borderDash:[7,4],tension:0}))}
+r.hl=hl;const c=CH[v];c.data.datasets=ds;c.options.scales.x.min=S.range[0];c.options.scales.x.max=S.range[1];c.update('none');sgf(v)}
+function sgf(v){const r=R[v],m=V[v];let h='';
+SCN.forEach(([k,l,c])=>{const s=r.sc[k];if(!s)return;const g=s.tr?SG(s.tr.p):['n/a','','#7f93b0'],ch=s.ch.filter(Number.isFinite),md=qn(ch,.5),ag=ch.length?Math.round(ch.filter(x=>Math.sign(x)===Math.sign(md)).length/ch.length*100):0;
+h+=`<div class="sc" style="border-color:${c};opacity:${S.on[k]?1:.35}"><div><b style="color:${c}">${l}</b> <span style="color:${g[2]};font-weight:700">${g[0]}</span></div><div><b>${s.tr?(s.tr.b>=0?'+':'')+f(s.tr.b*10,m.d+1):'–'}</b>/dec · ${g[1]}</div></div>`});
+$('#sg-'+v).innerHTML=h}
+function kpi(v){const r=R[v],d=D[v],y=S.hover??S.year,m=V[v];let h=`<span class="yr">${y}</span>`;
+if(d.era){const i=d.era.y.indexOf(y);if(i>=0)h+=`<span style="color:#e6edf7">ERA5 <b>${f(d.era.v[i],m.d)}</b></span>`}
+SCN.forEach(([k,l,c])=>{if(!S.on[k]||!r.sc[k])return;const p=r.sc[k].med.find(q=>q.x===y);if(!p||y<2015)return;
+const dl=r.base==null?'':m.m?` <small>(${(p.y/r.base-1)*100>=0?'+':''}${f((p.y/r.base-1)*100,0)}%)</small>`:` <small>(${p.y-r.base>=0?'+':''}${f(p.y-r.base,1)})</small>`;
+h+=`<span style="color:${c}">${l.replace('SSP','')} <b>${f(p.y,m.d)}</b>${dl}</span>`});
+$('#rd-'+v).innerHTML=h}
+/* ---- plugins ---- */
+const reveal={id:'rv',beforeDatasetsDraw(c){const a=c.chartArea;c.ctx.save();c.ctx.beginPath();c.ctx.rect(a.left-3,a.top-6,(a.right-a.left+6)*P,a.bottom-a.top+12);c.ctx.clip()},afterDatasetsDraw(c){c.ctx.restore()}};
+const marker={id:'mk',afterDraw(c){const a=c.chartArea,x=c.scales.x,g=c.ctx,y=S.hover??S.year;g.save();
+if(S.drag&&Math.abs(S.drag.b-S.drag.a)>1){const p=x.getPixelForValue(S.drag.a),q=x.getPixelForValue(S.drag.b);g.fillStyle='#3b82f633';g.fillRect(Math.min(p,q),a.top,Math.abs(q-p),a.bottom-a.top)}
+if(y>=S.range[0]&&y<=S.range[1]){const px=x.getPixelForValue(y);g.strokeStyle=S.hover!=null?'#9ec5ff':'#ffffff99';g.setLineDash([4,3]);g.beginPath();g.moveTo(px,a.top);g.lineTo(px,a.bottom);g.stroke()}g.restore()}};
+const pins={id:'pn',afterDraw(c){if(!(S.hi||S.lo)||P<.98)return;const v=c.canvas.id.slice(2),hl=(R[v]||{}).hl;if(!hl)return;const X=c.scales.x,Y=c.scales.y,g=c.ctx,ph=(performance.now()%1700)/1700;g.save();
+hl.forEach(h=>[['hi',S.hi,h.col],['lo',S.lo,'#6ea8ff']].forEach(([t,on,rc])=>{if(!on)return;h[t].forEach((p,i)=>{const px=X.getPixelForValue(p.x),py=Y.getPixelForValue(p.y),q=(ph+i*.22)%1;
+g.globalAlpha=1-q;g.lineWidth=2;g.strokeStyle=rc;g.beginPath();g.arc(px,py,4+q*11,0,7);g.stroke();g.globalAlpha=1;
+g.beginPath();g.arc(px,py,3.8,0,7);g.fillStyle=h.col;g.fill();g.lineWidth=1.6;g.strokeStyle=rc;g.stroke();
+if(h.col==='#e6edf7'){g.fillStyle=rc;g.font='9px sans-serif';g.textAlign='center';g.fillText(p.x,px,py+(t==='hi'?-9:16))}})}));g.restore()}};
+/* ---- UI ---- */
+let raf=0,pl=0,last=0;function redraw(){if(raf)return;raf=requestAnimationFrame(()=>{raf=0;Object.values(CH).forEach(c=>c.draw());Object.keys(CH).forEach(kpi)})}
+function pulse(t){if(!(S.hi||S.lo)){pl=0;return}if(t-last>32){last=t;Object.values(CH).forEach(c=>c.draw())}pl=requestAnimationFrame(pulse)}
+function anim(){const t0=performance.now();(function s(t){const k=Math.min(1,(t-t0)/1300);P=1-Math.pow(1-k,3);Object.values(CH).forEach(c=>c.draw());if(k<1)requestAnimationFrame(s)})(t0)}
+function all(a){Object.keys(CH).forEach(upd);if(a){P=0;anim()}redraw();ui()}
+function ui(){$('#bd').textContent='Band: '+BANDS[S.band][0];$('#bc').textContent='Bias-corrected: '+(S.bc?'ON':'OFF');
+$('#bh').classList.toggle('act',!!S.hi);$('#bl').classList.toggle('act',!!S.lo);
+document.querySelectorAll('[data-r]').forEach(b=>b.classList.toggle('act',b.dataset.r===S.range.join()));
+document.querySelectorAll('.chip').forEach(b=>b.classList.toggle('off',!S.on[b.dataset.k]))}
+function stop(){if(S.play){clearInterval(S.play);S.play=null}$('#pl').textContent='▶ Auto-run'}
+function play(){stop();if(S.year>=S.range[1]-1)S.year=S.range[0];$('#pl').textContent='❚❚ Pause';S.play=setInterval(()=>{S.year++;if(S.year>=S.range[1])stop();redraw()},65)}
+function wire(v,cv){const X=e=>CH[v].scales.x.getValueForPixel(e.clientX-cv.getBoundingClientRect().left),cap=y=>Math.max(S.range[0],Math.min(S.range[1],Math.round(y)));
+cv.onpointerdown=e=>{stop();S.drag={a:X(e),b:X(e)}};
+cv.onpointermove=e=>{if(S.drag)S.drag.b=X(e);S.hover=cap(X(e));redraw()};
+cv.onpointerup=e=>{const d=S.drag;S.drag=null;if(!d)return;if(Math.abs(d.b-d.a)>=4){S.range=[Math.round(Math.min(d.a,d.b)),Math.round(Math.max(d.a,d.b))];S.hover=null;all(true)}else{S.year=cap(X(e));redraw()}};
+cv.onpointerleave=()=>{S.hover=null;S.drag=null;redraw()};
+cv.ondblclick=()=>{S.range=[1950,2100];all(true)}}
+function build(){$('#grid').innerHTML=Object.entries(V).map(([k,m])=>{const d=D[k],t=d.era?d.era.tr:null,sg=t?SG(t.p):null,miss=[!d.era&&'ERA5',...SCN.filter(s=>!d.cm[s[0]]).map(s=>s[1])].filter(Boolean);
+return`<div class="pn" data-v="${k}"><div class="hd"><b>${m.n} <small style="color:#7f93b0;font-weight:400">(${m.u})</small></b><span>${t?`ERA5 trend <b style="color:#6ea8ff">${t.b>=0?'+':''}${f(t.b*10,m.d+1)}</b>/decade <b style="color:${sg[2]}">${sg[0]}</b>`:''}${miss.length?' · missing: '+miss.join(', '):''}</span></div><div class="rd" id="rd-${k}"></div><div class="cv"><canvas id="c-${k}"></canvas></div><div class="sg" id="sg-${k}"></div></div>`}).join('');
+Chart.defaults.color='#7f93b0';Chart.defaults.font.size=10;
+Object.keys(V).forEach(k=>{const cv=$('#c-'+k);CH[k]=new Chart(cv,{type:'line',data:{datasets:[]},plugins:[reveal,marker,pins],options:{responsive:true,maintainAspectRatio:false,animation:false,parsing:false,normalized:true,events:[],layout:{padding:{right:6}},
+plugins:{legend:{display:false},tooltip:{enabled:false}},scales:{x:{type:'linear',grid:{color:'#1a2a44'},ticks:{callback:v=>v,maxTicksLimit:7}},y:{grid:{color:'#1a2a44'},grace:'6%',ticks:{maxTicksLimit:5}}}}});wire(k,cv)})}
+/* ---- start ---- */
+(async()=>{await Promise.all(Object.keys(V).map(loadVar));
+const any=Object.values(D).some(d=>d.era||Object.keys(d.cm).length);
+if(!any){$('#err').innerHTML='<div><b>No CSV files found.</b><br>Browsers block local file access when this page is opened by double-click.<br>Put this HTML in the same folder as your CSVs, open a terminal there and run <code>py -m http.server 8000</code>, then open <code>http://localhost:8000/tartu_dashboard.html</code><br>(or use the VS Code “Live Server” extension).</div>';return}
+$('#err').remove();
+$('#chips').innerHTML=SCN.map(([k,l,c])=>`<button class="chip" data-k="${k}"><i style="background:${c}"></i>${l}</button>`).join('');
+document.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{stop();S.on[b.dataset.k]^=1;all(true)});
+document.querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>{stop();S.range=b.dataset.r.split(',').map(Number);S.year=Math.min(Math.max(S.year,S.range[0]),S.range[1]);all(true)});
+$('#bd').onclick=()=>{S.band=(S.band+1)%3;all(true)};$('#bc').onclick=()=>{S.bc^=1;all(true)};
+const hlBtn=k=>{S[k]^=1;ui();if((S.hi||S.lo)&&!pl)pl=requestAnimationFrame(pulse);else if(!(S.hi||S.lo))redraw()};
+$('#bh').onclick=()=>hlBtn('hi');$('#bl').onclick=()=>hlBtn('lo');
+$('#pl').onclick=()=>S.play?stop():play();
+build();P=0;all(true);setTimeout(()=>{S.year=1950;play()},1500)})();
+</script></body></html>
